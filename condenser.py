@@ -181,7 +181,7 @@ class Condenser(Layer):
             mask = tf.expand_dims(tf.cast(mask, tf.float32), -1)
             alpha *= mask
             alpha_sum = tf.reduce_sum(alpha, axis=1, keepdims=True)
-            alpha /= alpha_sum
+            alpha /= tf.clip_by_value(alpha_sum, 1e-6, float("inf"))
         alpha = tf.expand_dims(alpha, axis=-1)
 
         # add positional encoding
