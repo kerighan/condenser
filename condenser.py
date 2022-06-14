@@ -5,22 +5,23 @@ from tensorflow.keras.layers import Layer
 
 class Condenser(Layer):
     def __init__(self,
-                 n_sample_points=10,
-                 sampling_bounds=(1e-3, 100),
-                 attention_dim=2,
-                 reduce_dim=None,
-                 reduce_trainable=False,
+                 n_sample_points=15,
+                 sampling_bounds=(1e-1, 100),
+                 attention_dim=1,
+                 reducer_dim=None,
+                 reducer_trainable=False,
                  theta_trainable=True,
                  positional_encoding_trainable=True,
-                 attention_initializer=None,
+                 attention_initializer="glorot_uniform",
                  bias_initializer="zeros",
                  attention_regularizer=None,
-                 theta_regularizer=None,
+                 theta_regularizer="l2",
                  bias_regularizer=None,
-                 reduce_regularizer=None,
+                 reducer_regularizer=None,
                  positional_regularizer="l2",
-                 attention_activation="sigmoid",
-                 residual_activation="tanh",
+                 attention_activation="relu",
+                 residual_activation=None,
+                 reducer_activation=None,
                  use_residual=False,
                  use_positional_encoding=False,
                  use_reducer=True,
@@ -30,8 +31,8 @@ class Condenser(Layer):
         self.n_sample_points = n_sample_points
         self.sampling_bounds = sampling_bounds
         self.attention_dim = attention_dim
-        self.reduce_dim = reduce_dim
-        self.reduce_trainable = reduce_trainable
+        self.reducer_dim = reducer_dim
+        self.reducer_trainable = reducer_trainable
         self.theta_trainable = theta_trainable
         self.positional_encoding_trainable = positional_encoding_trainable
 
@@ -40,11 +41,12 @@ class Condenser(Layer):
 
         self.attention_activation = activations.get(attention_activation)
         self.residual_activation = activations.get(residual_activation)
+        self.reducer_activation = activations.get(reducer_activation)
 
         self.attention_regularizer = regularizers.get(attention_regularizer)
         self.theta_regularizer = regularizers.get(theta_regularizer)
         self.bias_regularizer = regularizers.get(bias_regularizer)
-        self.reduce_regularizer = regularizers.get(reduce_regularizer)
+        self.reducer_regularizer = regularizers.get(reducer_regularizer)
         self.positional_regularizer = regularizers.get(positional_regularizer)
 
         self.use_residual = use_residual
@@ -57,8 +59,8 @@ class Condenser(Layer):
             "n_sample_points": self.n_sample_points,
             "sampling_bounds": self.sampling_bounds,
             "attention_dim": self.attention_dim,
-            "reduce_dim": self.reduce_dim,
-            "reduce_trainable": self.reduce_trainable,
+            "reducer_dim": self.reducer_dim,
+            "reducer_trainable": self.reducer_trainable,
             "theta_trainable": self.theta_trainable,
             "positional_encoding_trainable":
             self.positional_encoding_trainable,
@@ -69,13 +71,14 @@ class Condenser(Layer):
                 self.attention_activation),
             "residual_activation": activations.serialize(
                 self.residual_activation),
+            "reducer_activation": activations.serialize(self.reducer_activation),
             "attention_regularizer": regularizers.serialize(
                 self.attention_regularizer),
             "theta_regularizer": regularizers.serialize(
                 self.theta_regularizer),
             "bias_regularizer": regularizers.serialize(self.bias_regularizer),
-            "reduce_regularizer": regularizers.serialize(
-                self.reduce_regularizer),
+            "reducer_regularizer": regularizers.serialize(
+                self.reducer_regularizer),
             "positional_regularizer": regularizers.serialize(
                 self.positional_regularizer),
             "use_residual": self.use_residual,
@@ -96,17 +99,18 @@ class Condenser(Layer):
         input_length = input_shape[1]
         in_dim = input_shape[2]
         att_dim = self.attention_dim
+        att_latent_dim = int(in_dim * att_dim)
 
         self.input_length = input_length
         self.input_dim = in_dim
 
         # attention weights
-        self.att1 = self.add_weight(shape=[in_dim, in_dim * att_dim],
+        self.att1 = self.add_weight(shape=[in_dim, att_latent_dim],
                                     name="att1",
                                     initializer=self.attention_initializer,
                                     regularizer=self.attention_regularizer)
 
-        self.att2 = self.add_weight(shape=[att_dim * in_dim, in_dim],
+        self.att2 = self.add_weight(shape=[att_latent_dim, in_dim],
                                     name="att2",
                                     initializer=self.attention_initializer,
                                     regularizer=self.attention_regularizer)
@@ -120,17 +124,26 @@ class Condenser(Layer):
                                      trainable=self.theta_trainable)
 
         # biases
-        self.bias_att = self.add_weight(shape=[1, in_dim*att_dim],
-                                        name="bias_att",
-                                        initializer=self.bias_initializer)
-
-        self.bias_char = self.add_weight(shape=[1, in_dim, 1],
-                                         name="bias_char",
+        self.bias_att1 = self.add_weight(shape=[1, att_latent_dim],
+                                         name="bias_att1",
                                          initializer=self.bias_initializer)
 
-        self.scale = self.add_weight(shape=[1],
-                                     name="scale",
-                                     initializer="ones")
+        self.bias_att2 = self.add_weight(shape=[1, in_dim],
+                                         name="bias_att2",
+                                         initializer=self.bias_initializer)
+
+        # scalers
+        self.scale_char = self.add_weight(shape=[1],
+                                          name="scale_char",
+                                          initializer="ones")
+
+        self.scale_att = self.add_weight(shape=[1],
+                                         name="scale_att",
+                                         initializer="ones")
+
+        self.scale_reducer = self.add_weight(shape=[1],
+                                             name="scale_reducer",
+                                             initializer="ones")
 
         # add positional encoding
         if self.use_positional_encoding:
@@ -143,45 +156,41 @@ class Condenser(Layer):
                 self.positional = get_positional_encoding(input_length, in_dim)
 
         if self.use_reducer:
-            reduce_in_shape = 2 * in_dim * self.n_sample_points
-            if self.use_residual:
-                reduce_in_shape += in_dim
-            reduce_dim = in_dim if self.reduce_dim is None else self.reduce_dim
-
+            reducer_in_shape = 2 * in_dim * self.n_sample_points
+            reducer_dim = in_dim if self.reducer_dim is None else self.reducer_dim
             self.reducer = self.add_weight(
-                shape=[reduce_in_shape, reduce_dim],
+                shape=[reducer_in_shape, reducer_dim],
                 name="reducer",
-                initializer=initializers.RandomNormal(0, 1./reduce_dim),
-                regularizer=self.reduce_regularizer,
-                trainable=self.reduce_trainable)
-        super(Condenser, self).build(input_shape)
+                initializer=initializers.RandomNormal(0, 1./reducer_dim),
+                regularizer=self.reducer_regularizer,
+                trainable=self.reducer_trainable)
+
+        super().build(input_shape)
 
     def call(self, input, mask=None, **kwargs):
         dot = tf.matmul
+
+        # compute attention weights for all dimensions
+        alpha = self.attention_activation(dot(input, self.att1) +
+                                          self.bias_att1)
+        alpha = self.attention_activation(dot(alpha, self.att2) +
+                                          self.bias_att2)
+        alpha = tf.exp(self.scale_att * alpha)
+        # ensure attention weights are null on masked values
         if mask is not None:
             mask = tf.expand_dims(tf.cast(mask, tf.float32), -1)
-            input *= mask
+            alpha *= mask
+            alpha_sum = tf.reduce_sum(alpha, axis=1, keepdims=True)
+            alpha /= alpha_sum
+        alpha = tf.expand_dims(alpha, axis=-1)
 
         # add positional encoding
         if self.use_positional_encoding:
             input += self.positional
 
-        # compute attention weights for all dimensions
-        alpha = self.attention_activation(
-            dot(input, self.att1) + self.bias_att)
-        alpha = tf.nn.softmax(self.scale * dot(alpha, self.att2), axis=-1)
-
-        # ensure attention weights are really null on masked values
-        if mask is not None:
-            alpha *= mask
-            # and renormalize attention weights
-            norm = tf.clip_by_value(tf.reduce_sum(
-                alpha, keepdims=True, axis=1), 1e-9, float("inf"))
-            alpha /= norm
-        alpha = tf.expand_dims(alpha, axis=-1)
-
         # sample characteristic function
-        phi = tf.expand_dims(input, axis=-1) * self.theta + self.bias_char
+        phi = (tf.expand_dims(input, axis=-1) *
+               self.theta * self.scale_char)
         real = tf.reduce_sum(alpha * tf.cos(phi), axis=1)
         imag = tf.reduce_sum(alpha * tf.sin(phi), axis=1)
 
@@ -189,22 +198,23 @@ class Condenser(Layer):
         stack = tf.concat([real, imag], axis=-1)
         stack = tf.reshape(stack, (-1, 2*self.input_dim*self.n_sample_points))
 
+        # reducer output dim
+        if self.use_reducer:
+            stack = self.reducer_activation(
+                self.scale_reducer * dot(stack, self.reducer))
+
         # concatenate characteristic function and input vector
         if self.use_residual:
-            res = self.residual_activation(tf.reduce_sum(
-                input * alpha[:, :, :, 0], axis=-2))
+            res = self.residual_activation(
+                tf.reduce_sum(input * alpha[:, :, :, 0], axis=1))
             stack = tf.concat([stack, res], axis=-1)
-
-        # reduce output dim
-        if self.use_reducer:
-            stack = dot(stack, self.reducer)
         return stack
 
 
 class WeightedAttention(Layer):
     def __init__(
-            self, hidden_dim=32, l1=1e-5,
-            bias_initializer=None,
+            self,
+            hidden_dim=32, l1=1e-5,
             bias_regularizer=None,
             attention_initializer="glorot_normal",
             attention_activation="tanh",
@@ -215,7 +225,6 @@ class WeightedAttention(Layer):
         self.hidden_dim = hidden_dim
         self.l1 = l1
 
-        self.bias_initializer = initializers.get(bias_initializer)
         self.bias_regularizer = regularizers.get(bias_regularizer)
 
         self.attention_initializer = initializers.get(attention_initializer)
@@ -254,9 +263,11 @@ class WeightedAttention(Layer):
         dot = tf.matmul
 
         # project and evaluate incoming inputs
-        alpha = self.attention_activation(dot(inp, self.att_1) + self.bias[0])
-        alpha = tf.nn.selu(dot(alpha, self.att_2) + self.bias[1])
-        alpha = tf.exp(alpha)
+        alpha = self.attention_activation(dot(inp, self.att_1) +
+                                          self.bias[0])
+        alpha = self.attention_activation(dot(alpha, self.att_2) +
+                                          self.bias[1])
+        alpha = tf.exp(self.scale * alpha)
 
         # ensure attention weights are really null on masked values
         if mask is not None:
