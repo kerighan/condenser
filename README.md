@@ -3,7 +3,7 @@ Keras-Condenser
 
 Condenser is a tensorflow layer that summarizes a variable size sequence into a fixed size vector that is independent of the sequence length. Preliminary results show that it outperforms common pooling methods (average, max), embedding of the [CLS] token and the usual weighted-attention mechanism.
 
-To get an overview of the principle behind Condenser, [read this blog entry](https://medium.com/@mchenebaux).
+To get an overview of the principle behind Condenser, [read this blog entry](https://medium.com/@mchenebaux/a-novel-text-classification-pipeline-using-self-attention-and-the-condenser-layer-9d1fddb0c2c4).
 
 To install package:
 ```
