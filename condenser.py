@@ -189,8 +189,7 @@ class Condenser(Layer):
             input += self.positional
 
         # sample characteristic function
-        phi = (tf.expand_dims(input, axis=-1) *
-               self.theta * self.scale_char)
+        phi = tf.expand_dims(input, axis=-1) * self.theta * self.scale_char
         real = tf.reduce_sum(alpha * tf.cos(phi), axis=1)
         imag = tf.reduce_sum(alpha * tf.sin(phi), axis=1)
 

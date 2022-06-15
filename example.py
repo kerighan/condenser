@@ -7,8 +7,8 @@ from tensorflow.keras.models import Model
 from condenser import Condenser
 
 MAX_FEATURES = 50000
-EMBEDDING_DIM = 200
-MAXLEN = 200
+EMBEDDING_DIM = 600
+MAXLEN = 300
 
 # get training data
 newsgroups_train = fetch_20newsgroups(subset='train')
@@ -16,7 +16,6 @@ newsgroups_test = fetch_20newsgroups(subset='test')
 
 # use convectors as a preprocessing pipeline
 nlp = Tokenize()
-nlp += Lemmatize(lang="en")
 nlp += Sequence(maxlen=MAXLEN, max_features=MAX_FEATURES)
 
 # process train data
@@ -32,10 +31,10 @@ n_features = nlp["Sequence"].n_features + 1
 # build model
 inp = Input(shape=(MAXLEN,))
 x = Embedding(n_features, EMBEDDING_DIM, mask_zero=True)(inp)
-x = SeqSelfAttention(attention_width=20)(x)
-x = SeqSelfAttention(attention_width=20)(x)
+x = SeqSelfAttention()(x)
+x = SeqSelfAttention()(x)
 x = Condenser(n_sample_points=15, reducer_dim=96)(x)
-x = Dense(48, activation="tanh")(x)
+x = Dense(64, activation="tanh")(x)
 out = Dense(20, activation="softmax")(x)
 
 # create and fit model
@@ -43,6 +42,6 @@ model = Model(inp, out)
 model.compile("nadam", "sparse_categorical_crossentropy", metrics=["accuracy"])
 model.summary()
 model.fit(X_train, y_train,
-          batch_size=100, epochs=3,
+          batch_size=200, epochs=3,
           validation_data=(X_test, y_test),
           shuffle=True)
