@@ -6,7 +6,7 @@ from tensorflow.keras.layers import Layer
 class Condenser(Layer):
     def __init__(self,
                  n_sample_points=15,
-                 sampling_bounds=(1e-1, 100),
+                 sampling_bounds=(1e-6, 100),
                  attention_dim=1,
                  reducer_dim=None,
                  reducer_trainable=False,
@@ -118,8 +118,10 @@ class Condenser(Layer):
         # characteristic function sampling points
         self.theta = self.add_weight(shape=[1, in_dim, self.n_sample_points],
                                      name="theta",
-                                     initializer=tf.random_uniform_initializer(
-                                          minval=self.sampling_bounds[0], maxval=self.sampling_bounds[1]),
+                                     #  initializer=tf.random_uniform_initializer(
+                                     #       minval=self.sampling_bounds[0], maxval=self.sampling_bounds[1]),
+                                     initializer=tf.random_normal_initializer(
+                                         0, stddev=self.sampling_bounds[1]),
                                      regularizer=self.theta_regularizer,
                                      trainable=self.theta_trainable)
 
@@ -165,9 +167,12 @@ class Condenser(Layer):
                 regularizer=self.reducer_regularizer,
                 trainable=self.reducer_trainable)
 
-        super().build(input_shape)
+        # super().build(input_shape)
 
-    def call(self, input, mask=None, **kwargs):
+    def compute_mask(self, _, mask=None):
+        return None
+
+    def call(self, input, mask=None):
         dot = tf.matmul
 
         # compute attention weights for all dimensions
@@ -207,6 +212,7 @@ class Condenser(Layer):
             res = self.residual_activation(
                 tf.reduce_sum(input * alpha[:, :, :, 0], axis=1))
             stack = tf.concat([stack, res], axis=-1)
+            # return res
         return stack
 
 

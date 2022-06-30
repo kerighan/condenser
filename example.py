@@ -7,8 +7,8 @@ from tensorflow.keras.models import Model
 
 from condenser import Condenser
 
-MAX_FEATURES = 100000
-EMBEDDING_DIM = 300
+MAX_FEATURES = 200000
+EMBEDDING_DIM = 400
 MAXLEN = 600
 
 # get training data
@@ -34,17 +34,14 @@ inp = Input(shape=(MAXLEN,))
 x = Embedding(n_features, EMBEDDING_DIM, mask_zero=True)(inp)
 x = SeqSelfAttention(units=64,
                      attention_width=10,
-                     attention_activation='tanh',
-                     kernel_regularizer=regularizers.l2(1e-5),
-                     attention_regularizer_weight=1e-4,
+                     attention_activation="tanh",
                      attention_type=SeqSelfAttention.ATTENTION_TYPE_MUL)(x)
 x = SeqSelfAttention(units=64,
                      attention_width=10,
-                     attention_activation='tanh',
-                     kernel_regularizer=regularizers.l2(1e-5),
-                     attention_regularizer_weight=1e-4,
+                     attention_activation="tanh",
                      attention_type=SeqSelfAttention.ATTENTION_TYPE_MUL)(x)
-x = Condenser(n_sample_points=15, reducer_dim=96)(x)
+x = Condenser(n_sample_points=15, reducer_dim=96, theta_regularizer=None,
+              attention_activation="relu")(x)
 x = Dense(48, activation="tanh")(x)
 out = Dense(20, activation="softmax")(x)
 
@@ -53,7 +50,7 @@ model = Model(inp, out)
 model.compile("nadam", "sparse_categorical_crossentropy", metrics=["accuracy"])
 model.summary()
 model.fit(X_train, y_train,
-          batch_size=20, epochs=3,
+          batch_size=20, epochs=5,
           validation_data=(X_test, y_test),
           shuffle=True)
 # >>> val_accuracy=0.8716
